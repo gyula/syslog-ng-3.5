@@ -341,7 +341,7 @@ log_msg_parse_kmsg(LogMessage *msg, const guchar *data, gsize length)
 }
 
 void
-linux_kmsg_format_handler(MsgFormatOptions *parse_options,
+linux_kmsg_format_handler(const MsgFormatOptions *parse_options,
                           const guchar *data, gsize length,
                           LogMessage *self)
 {
