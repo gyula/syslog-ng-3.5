@@ -33,7 +33,6 @@
 #include "dnscache.h"
 #include "tls-support.h"
 #include "scratch-buffers.h"
-#include "config.h"
 
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -48,8 +47,6 @@
 
 #if ENABLE_SYSTEMD
 #include <systemd/sd-daemon.h>
-#else
-#define sd_notify(...)
 #endif
 
 /**
@@ -471,6 +468,35 @@ main_loop_io_worker_sync_call(void (*func)(void))
 }
 
 /************************************************************************************
+ *
+ ************************************************************************************/
+
+#if ENABLE_SYSTEMD
+static void
+main_loop_publish_status(const gchar *status)
+{
+  gchar *status_buffer;
+  time_t now = time(NULL);
+
+  status_buffer = g_strdup_printf("STATUS=%s (%s)", status, ctime(now, buf));
+  sd_notify(0, status_buffer);
+  g_free(status_buffer);
+}
+
+static void
+main_loop_indicate_readiness(void)
+{
+  sd_notify(0, "READY=1");
+}
+
+#else
+
+#define main_loop_publish_status(x)
+#define main_loop_indicate_readiness()
+
+#endif
+
+/************************************************************************************
  * config load/reload
  ************************************************************************************/
 
@@ -513,12 +539,12 @@ main_loop_reload_config_apply(void)
       main_loop_new_config->persist = NULL;
       cfg_free(main_loop_old_config);
       current_configuration = main_loop_new_config;
-      sd_notify(0, "STATUS=");
+      main_loop_publish_status("Running");
     }
   else
     {
       msg_error("Error initializing new configuration, reverting to old config", NULL);
-      sd_notify(0, "STATUS=Error initializing new configuration, using the old config");
+      main_loop_publish_status("Error initializing new configuration, using the old config");
       cfg_persist_config_move(main_loop_new_config, main_loop_old_config);
       if (!cfg_init(main_loop_old_config))
         {
@@ -557,7 +583,7 @@ main_loop_reload_config_apply(void)
 void
 main_loop_reload_config_initiate(void)
 {
-  sd_notify(0, "STATUS=Reloading configuration");
+  main_loop_publish_status("Reloading configuration");
 
   if (main_loop_new_config)
     {
@@ -582,7 +608,7 @@ main_loop_reload_config_initiate(void)
       msg_error("Error parsing configuration",
                 evt_tag_str(EVT_TAG_FILENAME, cfgfilename),
                 NULL);
-      sd_notify(0, "STATUS=Error parsing new configuration, using the old config");
+      main_loop_publish_status("Error parsing new configuration, using the old config");
       return;
     }
   main_loop_io_worker_sync_call(main_loop_reload_config_apply);
@@ -679,6 +705,8 @@ setup_signals(void)
 int
 main_loop_init(void)
 {
+  main_loop_publish_status("Starting up...");
+
   app_startup();
   setup_signals();
   main_loop_io_workers.thread_start = main_loop_io_worker_thread_start;
@@ -713,7 +741,6 @@ main_loop_run(void)
   msg_notice("syslog-ng starting up",
              evt_tag_str("version", VERSION),
              NULL);
-  sd_notify(0, "STATUS=starting up");
 
   IV_TIMER_INIT(&stats_timer);
   stats_timer.handler = stats_timer_elapsed;
@@ -748,10 +775,10 @@ main_loop_run(void)
   stats_timer_kickoff(current_configuration);
 
   /* main loop */
-  sd_notify(0, "STATUS=");
-  sd_notify(0, "READY=1");
+  main_loop_indicate_readiness();
+  main_loop_publish_status("Running...");
   iv_main();
-  sd_notify(0, "STATUS=Shutting down");
+  main_loop_publish_status("Shutting down...");
 
   control_destroy();
 
